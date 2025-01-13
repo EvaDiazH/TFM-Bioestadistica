@@ -1,0 +1,1183 @@
+---
+title: "tfg_Cluster"
+author: "Eva Díaz Hernández"
+date: "2024-11-22"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Librerias
+
+```{r}
+# Carga todas las librerias necesarias
+library(readxl)
+library(e1071)
+library(corrplot)
+library(dplyr)
+library(ggplot2)
+library(factoextra)
+library(cluster)
+library(dendextend)
+library(missForest)
+library(mclust)
+library(teigen)
+library(stats)
+library(ClusterR)
+library(DescTools)
+library(tidyr)
+library(moments)
+library(dunn.test)
+library(nnet)
+library(randomForest)
+library(bestNormalize)
+library(effectsize)
+library(MASS)
+library(rmarkdown)
+library(biotools)
+library(ARTool)
+library(car)
+```
+
+
+
+## Cargar los datos
+
+```{r}
+# Abrimos el archivo de los datos
+data <- read_excel("Datos_mot_ind.xlsx")
+```
+
+## Visualizamos los datos
+
+```{r}
+# Mostramos las dimensiones
+dim(data)
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+# Ajustar a 2 filas, 4 columnas
+par(mfrow = c(2, 4))
+
+# Histogramas para cada variables
+hist(data$VCL, main = "VCL histogram", xlab = "VCL", col = "lightblue")
+hist(data$VSL, main = "VSL histogram", xlab = "VSL", col = "lightblue")
+hist(data$ALH, main = "ALH histogram", xlab = "ALH", col = "lightblue")
+hist(data$WOB, main = "WOB histogram", xlab = "WOB", col = "lightblue")
+hist(data$VAP, main = "VAP histogram", xlab = "VAP", col = "lightblue")
+hist(data$STR, main = "STR histogram", xlab = "STR", col = "lightblue")
+hist(data$LIN, main = "LIN histogram", xlab = "LIN", col = "lightblue")
+hist(data$BCF, main = "BCF histogram", xlab = "BCF", col = "lightblue")
+
+# Restablecer a 1 gráfico por página
+par(mfrow = c(1, 1))
+```
+
+## Ajustamos los datos 
+
+```{r}
+# Crear una copia del dataframe original para trabajar sin modificarlo
+data_mod <- data
+
+# Eliminar las columnas que no aportan información real o relevante
+data_mod <- data_mod[, -((ncol(data_mod) - 2):ncol(data_mod))]
+data_mod <- data_mod[, !names(data_mod) %in% c("Número de espermatozoide", "Archivo", "Campo", "Primero Imágenes", "Último Imágenes")]
+
+# Convertir las columnas correspondientes a factores
+data_mod$Medio <- as.factor(data_mod$Medio)
+data_mod$Tiempo <- as.factor(data_mod$Tiempo)
+data_mod$Replica <- as.factor(data_mod$Replica)
+data_mod$Velocidad <- as.factor(data_mod$Velocidad)
+data_mod$Progresividad <- as.factor(data_mod$Progresividad)
+
+# Ver un resumen del nuevo dataframe modificado
+summary(data_mod)
+```
+
+```{r}
+motPCA <- data_mod[, c("VCL", "VSL", "ALH", "WOB", "VAP", "STR", "LIN", "BCF")]
+
+# Vemos la matriz de correlación
+corr_matrix <- cor(motPCA)  
+cor(motPCA)
+
+# Visualizamos
+corrplot(corr_matrix, method = "color", type = "upper", tl.cex = 0.8)
+```
+
+
+```{r}
+# Seleccionamos las variables que explican el movimiento
+mot <- data_mod[, c("VSL", "ALH", "LIN")]
+
+# Cálculo de Skewness y Kurtosis para cada variable de 3 letras
+skewness_vals <- apply(mot, 2, skewness)
+kurtosis_vals <- apply(mot, 2, kurtosis)
+
+
+skewness_vals  
+```
+
+```{r}
+kurtosis_vals  
+```
+
+```{r}
+# Outliers usando el z-score (más de 3 desviaciones estándar de la media)
+z_scores <- scale(mot)  # Estandarizamos las variables
+num_outliers <- apply(z_scores, 2, function(x) sum(abs(x) > 3))
+
+num_outliers
+```
+
+
+```{r}
+mot_transformado <- mot
+
+for (var in names(mot_transformado)) {
+  # Transformación por rangos
+  rangos <- rank(mot[[var]], ties.method = "average")
+  
+  # Normalización a [0, 1]
+  mot_transformado[[var]] <- (rangos - min(rangos)) / (max(rangos) - min(rangos))
+}
+
+# Q-Q plot para cada variable numérica (Rank trasformation)
+for (nombre in names(mot_transformado)) {
+  qqnorm(mot_transformado[[nombre]], main = paste("Q-Q Plot de", nombre))
+  qqline(mot_transformado[[nombre]], col = "red")
+}
+```
+
+```{r}
+# Detección de outliers usando el z-score (más de 3 desviaciones estándar de la media)
+z_scores <- scale(mot_transformado)  # Estandarizar las variables
+num_outliers <- apply(z_scores, 2, function(x) sum(abs(x) > 3))
+
+# Mostrar el número de outliers por variable
+num_outliers
+```
+
+```{r}
+# Ajustar a 2 filas, 4 columnas
+par(mfrow = c(2, 4))
+
+# Histogramas para cada variables
+hist(mot_transformado$VSL, main = "VSL histogram", xlab = "VSL", col = "lightblue")
+hist(mot_transformado$ALH, main = "ALH histogram", xlab = "ALH", col = "lightblue")
+hist(mot_transformado$LIN, main = "LIN histogram", xlab = "LIN", col = "lightblue")
+
+# Restablecer a 1 gráfico por página
+par(mfrow = c(1, 1))
+```
+```{r}
+# Ajustar a 2 filas, 4 columnas
+par(mfrow = c(2, 4))
+
+# Histogramas para cada variables
+hist(mot$VSL, main = "VSL histogram", xlab = "VSL", col = "lightblue")
+hist(mot$ALH, main = "ALH histogram", xlab = "ALH", col = "lightblue")
+hist(mot$LIN, main = "LIN histogram", xlab = "LIN", col = "lightblue")
+
+# Restablecer a 1 gráfico por página
+par(mfrow = c(1, 1))
+```
+
+```{r}
+par(mfrow = c(1, 2))  
+
+# Gráfico de los datos originales
+boxplot(as.data.frame(mot), 
+        xlab = "Variables", 
+        ylab = "Original values")
+
+# Gráfico de los datos transformados
+boxplot(as.data.frame(mot_transformado), 
+        xlab = "Variables", 
+        ylab = "Standardized values")
+```
+
+## Realizamos el analisis de clustering 
+
+```{r}
+# Calculamos la inercia para diferentes valores de k
+sse <- sapply(1:10, function(k){
+  kmeans(mot_transformado, centers = k, nstart = 10)$tot.withinss
+})
+
+# Grafico
+qplot(1:10, sse, geom = "line") + 
+  labs(x = "Número de Clusters k", y = "Suma de Errores al Cuadrado (SSE)")
+
+```
+```{r}
+# Comprobamos con el raw data
+kmeans_result <- kmeans(mot, centers = 3, nstart = 10)
+
+sil <- silhouette(kmeans_result$cluster, dist(mot))
+summary(sil)
+fviz_silhouette(sil)
+```
+
+
+```{r}
+# Aplicar K-means con el número óptimo de clusters 
+set.seed(123)  # Fijar una semilla para resultados reproducibles
+kmeans_result_bien <- kmeans(mot_transformado, centers = 3, nstart = 70)
+```
+
+```{r}
+# Visualización de los clusters
+fviz_cluster(kmeans_result_bien, data = mot_transformado, geom = "point", ellipse.type = "norm")
+
+# Estudiamos las siluetas
+sil <- silhouette(kmeans_result_bien$cluster, dist(mot_transformado))
+summary(sil)
+fviz_silhouette(sil)
+```
+
+
+```{r}
+
+mot_transformadoPCA <- motPCA 
+
+for (var in names(mot_transformadoPCA)) {
+  # Transformación por rangos
+  rangos <- rank(mot_transformadoPCA[[var]], ties.method = "average")
+  # Normalización a [0, 1]
+  mot_transformadoPCA[[var]] <- (rangos - min(rangos)) / (max(rangos) - min(rangos))
+}
+
+# Realizamos el PCA
+pca_result <- prcomp(mot_transformadoPCA, center = TRUE, scale. = TRUE)
+# Resumen del PCA
+summary(pca_result)
+
+# Visualización de la varianza explicada
+screeplot(pca_result, type = "lines", main = "Scree Plot")
+
+# Obtener las puntuaciones del PCA en un data frame
+pca_scores <- as.data.frame(pca_result$x)
+# Usar solo las primeras 3 componentes principales para clustering
+pca_data_for_clustering <- pca_scores[, 1:3]
+
+# Aplicar K-means con k = 3
+set.seed(123)  # Para reproducibilidad
+kmeans_result <- kmeans(pca_data_for_clustering, centers = 3, nstart = 25)
+# Visualización de la silueta
+sil <- silhouette(kmeans_result$cluster, dist(pca_data_for_clustering))
+summary(sil)
+fviz_silhouette(sil)
+```
+
+```{r}
+# Vemos la distribución
+fviz_cluster(kmeans_result, data = pca_data_for_clustering, geom = "point", ellipse.type = "norm")
+```
+
+```{r}
+# vemos las componentes por si encontramos algo interesante
+pca_result$rotation[,1:3]
+fviz_pca_var(pca_result, col.var="contrib", repel=T)
+```
+
+```{r}
+# Jerarquico
+hc_complete <- hclust(dist(mot_transformado), method = "complete")
+
+clusters_hc <- cutree(hc_complete, k = 3)
+
+
+# Convertir el modelo de hclust a un dendrograma y colorear los clusters
+dend <- as.dendrogram(hc_complete)
+dend <- color_branches(dend, k = 3)  
+
+# Graficar el dendrograma
+plot(dend, main = "3 Clusters dendrogram", ylab = "Distance")
+
+
+silhouette_hc <- silhouette(clusters_hc, dist(mot_transformado))
+summary(silhouette_hc)
+fviz_silhouette(silhouette_hc)
+```
+
+
+
+```{r}
+# Model-Based 
+gmm_result <- Mclust(mot_transformado)
+summary(gmm_result)
+
+# Visualización
+clusters_gmm <- gmm_result$classification
+sil <- silhouette(clusters_gmm, dist(mot_transformado))
+summary(sil)
+fviz_silhouette(sil)
+```
+
+```{r}
+# Realizar el análisis de k-medoides 
+kmedoides_result <- pam(mot_transformado, k = 3, pamonce = 5)
+
+sil_kmedoides <- silhouette(kmedoides_result$clustering, dist(mot_transformado))
+summary(sil_kmedoides)
+
+fviz_silhouette(sil_kmedoides)
+
+# Visualizar los clusters en 2D
+fviz_cluster(kmedoides_result, data = mot_transformado, geom = "point", ellipse.type = "norm")
+```
+
+```{r}
+# Fuzzy c-means
+fcm_result <- cmeans(mot_transformado, centers = 3)  
+
+# Asigna cada observación al cluster con mayor grado de pertenencia
+clusters_fcm <- apply(fcm_result$membership, 1, which.max)
+
+sil_fcm <- silhouette(clusters_fcm, dist(mot_transformado))
+summary(sil_fcm)
+fviz_silhouette(sil_fcm)
+
+# Pariciales 
+library(reshape2)
+# Convertir las membresías en un formato largo para ggplot
+membership_data <- melt(fcm_result$membership)
+
+# Asumir que tienes 3 clusters, aquí las columnas corresponden a clusters
+colnames(membership_data) <- c("Observacion", "Cluster", "Membership")
+
+# Graficar un mapa de calor
+ggplot(membership_data, aes(x = Cluster, y = Observacion, fill = Membership)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Heatmap of partial memberships", x = "Cluster", y = "Observation")
+```
+
+
+
+```{r}
+# k-means jerarquico
+res.hk <- hkmeans(mot_transformado, 3)
+# Estudiamos las siluetas
+sil <- silhouette(res.hk$cluster, dist(mot_transformado))
+summary(sil)
+ 
+fviz_silhouette(sil)
+```
+
+```{r}
+fviz_cluster(res.hk, data = mot_transformado, geom = "point", ellipse.type = "norm")
+```
+
+
+
+```{r}
+# Ejecutar K-means con ClusterR
+result <- KMeans_arma(mot_transformado, clusters = 3, n_iter = 100, seed_mode = "static_spread")
+
+# Obtener las asignaciones de clústeres con los centroides calculados
+clusters <- predict_KMeans(mot_transformado, result)
+
+# Calcular el índice de Silhouette con las asignaciones obtenidas
+sil <- silhouette(clusters, dist(mot_transformado))
+fviz_silhouette(sil)
+
+```
+
+
+----------------------------------
+
+## Vemos los resultados de los clusters
+
+```{r}
+# Añadir los clusters al dataframe original
+data_mod$clusterkmeans <- kmeans_result_bien$cluster
+
+
+
+# Ver el dataframe con los clusters añadidos
+head(data_mod)
+```
+
+```{r}
+# Tabla de contingencia: clusters vs tratamientos
+table_clusters_treatment <- table(data_mod$clusterkmeans, data_mod$Medio)
+print(table_clusters_treatment)
+
+# Proporciones para una visión relativa
+prop.table(table_clusters_treatment, margin = 2) # Por tratamiento
+prop.table(table_clusters_treatment, margin = 1) # Por cluster
+```
+
+
+```{r}
+# Gráfico cluster por medios
+
+ggplot(data_mod, aes(x = factor(Medio), fill =  factor(clusterkmeans))) +
+  geom_bar(position = "fill") +
+  labs(x = "Extender", y = "Proportion", fill = "Cluster") +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+# Resumen estadístico por cluster
+descrip_clust <- data_mod %>%
+  group_by(clusterkmeans) %>%
+  summarise(across(where(is.numeric), list(mean = mean, sd = sd), na.rm = TRUE))
+descrip_clust
+```
+
+```{r}
+# Para extraer la tabla para la memoria 
+
+#library(writexl)
+#write_xlsx(descrip_clust, "descrip_clust.xlsx")
+```
+
+
+
+```{r}
+# Apiladas por tiempo
+ggplot(data_mod, aes(x = factor(Tiempo), fill =  factor(clusterkmeans))) +
+  geom_bar(position = "fill") +
+  labs(x = "Time", y = "Proportion", fill = "Cluster") +
+  theme_minimal()
+```
+
+
+
+```{r}
+data_mod$clusterkmeans <- as.factor(data_mod$clusterkmeans)
+```
+
+# Empezamos el analisis estadistico
+
+
+
+
+
+
+```{r}
+# Modelo de regresión logística multinomial
+
+modelo_multinomial <- multinom(clusterkmeans ~ Tiempo , data = data_mod)
+
+# Resumen del modelo
+summary(modelo_multinomial)
+```
+```{r}
+# Calcular valores p para los coeficientes
+z_scores <- summary(modelo_multinomial)$coefficients / summary(modelo_multinomial)$standard.errors
+p_values <- 2 * (1 - pnorm(abs(z_scores)))
+
+# Visualizar los valores p
+p_values
+```
+```{r}
+# Cambiamos los valores de orden para asi acabar de comparar todos con todos
+data_mod$clusterkmeans <- factor(data_mod$clusterkmeans, levels = c("2", "1", "3"))
+
+# Modelo de regresión logística multinomial
+
+modelo_multinomial <- multinom(clusterkmeans ~ Tiempo , data = data_mod)
+
+# Resumen del modelo
+summary(modelo_multinomial)
+
+# Calcular valores p para los coeficientes
+z_scores <- summary(modelo_multinomial)$coefficients / summary(modelo_multinomial)$standard.errors
+p_values <- 2 * (1 - pnorm(abs(z_scores)))
+
+# Visualizar los valores p
+p_values
+```
+
+
+
+```{r}
+data_mod$clusterkmeans <- factor(data_mod$clusterkmeans, levels = c("1", "2", "3"))
+
+# Modelo de regresión logística multinomial
+modelo_multinomial <- multinom(clusterkmeans ~ Medio , data = data_mod)
+
+# Resumen del modelo
+summary(modelo_multinomial)
+
+
+# Calcular valores p para los coeficientes
+z_scores <- summary(modelo_multinomial)$coefficients / summary(modelo_multinomial)$standard.errors
+p_values <- 2 * (1 - pnorm(abs(z_scores)))
+
+# Visualizar los valores p
+p_values
+```
+
+```{r}
+data_mod$clusterkmeans <- factor(data_mod$clusterkmeans, levels = c("2", "1", "3"))
+
+# Modelo de regresión logística multinomial
+modelo_multinomial <- multinom(clusterkmeans ~ Medio , data = data_mod)
+
+# Resumen del modelo
+summary(modelo_multinomial)
+
+# Calcular valores p para los coeficientes
+z_scores <- summary(modelo_multinomial)$coefficients / summary(modelo_multinomial)$standard.errors
+p_values <- 2 * (1 - pnorm(abs(z_scores)))
+
+# Visualizar los valores p
+p_values
+```
+
+```{r}
+data_mod$clusterkmeans <- factor(data_mod$clusterkmeans, levels = c("1", "2", "3"))
+
+
+# Modelo de regresión logística multinomial
+modelo_multinomial <- multinom(clusterkmeans ~ Medio * Tiempo , data = data_mod)
+
+# Resumen del modelo
+summary(modelo_multinomial)
+
+```
+
+
+```{r}
+# Calcular valores p para los coeficientes
+z_scores <- summary(modelo_multinomial)$coefficients / summary(modelo_multinomial)$standard.errors
+p_values <- 2 * (1 - pnorm(abs(z_scores)))
+
+# Visualizar los valores p
+p_values
+
+```
+
+
+```{r}
+data_mod$clusterkmeans <- factor(data_mod$clusterkmeans, levels = c("2", "1", "3"))
+
+
+
+# Modelo de regresión logística multinomial
+modelo_multinomial <- multinom(clusterkmeans ~ Medio * Tiempo , data = data_mod)
+
+# Resumen del modelo
+summary(modelo_multinomial)
+
+# Calcular valores p para los coeficientes
+z_scores <- summary(modelo_multinomial)$coefficients / summary(modelo_multinomial)$standard.errors
+p_values <- 2 * (1 - pnorm(abs(z_scores)))
+
+# Visualizar los valores p
+p_values
+
+```
+
+```{r}
+# Vemoos la autocrrelación del modelo
+residuals_multinomial <- residuals(modelo_multinomial, type = "deviance")
+is.vector(residuals_multinomial)
+residuals_vector <- as.vector(residuals_multinomial)
+
+durbinWatsonTest(residuals_vector)
+acf(residuals_vector)
+```
+
+
+
+```{r}
+# Interacción timepo y medio
+data_mod$clusterkmeans <- factor(data_mod$clusterkmeans, levels = c("1", "2", "3"))
+data_mod$Medio <- as.factor(data_mod$Medio)
+data_mod$Tiempo <- as.factor(data_mod$Tiempo)
+
+
+ggplot(data_mod, aes(x = Medio, fill = factor(clusterkmeans))) +
+  geom_bar(position = position_fill()) +  # Mostrar proporciones
+  facet_wrap(~ Tiempo) +  # Facet por la variable Tiempo
+  labs(x = "Extender", y = "Proportion", fill = "Cluster kmeans") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotar texto para legibilidad
+
+```
+
+```{r}
+# Interacción al contratio
+ggplot(data_mod, aes(x = Tiempo, fill = factor(clusterkmeans))) +
+  geom_bar(position = position_fill()) +  # Mostrar proporciones
+  facet_wrap(~ Medio) +  # Facet por la variable Tiempo
+  labs(x = "Time", y = "Proportion", fill = "Cluster") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotar texto para legibilidad
+```
+
+
+
+
+
+
+
+------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+# Preparamos los datos de clsuter para analizar los datos de citometria
+
+
+
+
+
+```{r}
+# Calcular el total de individuos en cada combinación de Medio y Tiempo, y el porcentaje por cluster
+porcentajes_clusters <- data_mod %>%
+  group_by(Medio, Tiempo, Replica, clusterkmeans) %>% 
+  summarise(Cantidad = n(), .groups = "drop") %>% # Calcular cantidad por cluster
+  group_by(Medio, Tiempo, Replica) %>%
+  mutate(Porcentaje = (Cantidad / sum(Cantidad)) * 100) %>% # Calcular porcentaje
+  pivot_wider(names_from = clusterkmeans, 
+              values_from = Porcentaje, 
+              names_prefix = "Cluster_", 
+              values_fill = list(Porcentaje = 0)) # Poner en formato ancho
+
+
+
+# Juntamos los tres clusters a una misma fila del dataframe
+datos_resumidos <- porcentajes_clusters %>%
+  group_by(Medio, Tiempo, Replica) %>%
+  summarise(
+    Cluster_1 = max(Cluster_1),
+    Cluster_2 = max(Cluster_2),
+    Cluster_3 = max(Cluster_3)
+  )
+head (datos_resumidos)
+```
+
+
+# Abrimos los datos de citometria
+
+```{r}
+data_citometria <- read_excel("Resumen Citometría SOF N, SOF PRIS ,TALP .xlsx")
+head(data_citometria)
+```
+
+```{r}
+data_citometria$Time <- as.factor(data_citometria$Time)
+data_citometria$Treatment <- as.factor(data_citometria$Treatment)
+data_citometria$Replicate <- as.factor(data_citometria$Replicate)
+
+
+# Realizamos el join entre el dataframe creado previamente y 'data_citometria'
+data_combinada <- data_citometria %>%
+  left_join(datos_resumidos, 
+            by = c("Time" = "Tiempo", 
+                   "Treatment" = "Medio", 
+                   "Replicate" = "Replica"))
+
+head(data_combinada)
+```
+
+```{r}
+# Comprobamos normalidad
+shapiro.test(data_combinada$`IP+ PNA+ (muertos acrosoma dañado)`)
+shapiro.test(data_combinada$`IP+ PNA-`)
+shapiro.test(data_combinada$`IP- PNA- (vivos y acrosoma intacto)`)
+shapiro.test(data_combinada$`IP-PNA+`)
+```
+
+```{r}
+# Renombramos a algo más cómodo
+data_combinada <- data_combinada %>%
+  rename(
+    Live = `% Live`,
+    Apoptotic = `% Apoptotic`,
+    Dead = `% Dead`,
+    ActiveMito = `% Active mitochondria`,
+    MembraneDisorder = `% Desorden Fosfolípido en Membrana`,
+    IP_PNA_dead = `IP+ PNA+ (muertos acrosoma dañado)`,
+    IP_PNA_neg = `IP+ PNA-`,
+    IP_PNA_intact = `IP- PNA- (vivos y acrosoma intacto)`,
+    IP_PNA_plus = `IP-PNA+`,
+    ROS_dead = `INTENSIDAD ROS  MUERTOS`,
+    ROS_live = `INTENSIDAD ROS VIVOS`
+  )
+```
+
+```{r}
+# Eliminamos lo que no nos interesa
+data_combinada <- data_combinada[, !names(data_combinada) %in% c("Date", "Temperatura", "CON Suero/ SIN Suero", "...18", "Replicate")]
+data_clean <- na.omit(data_combinada)
+data_clean2 <-  data_clean[, !names(data_combinada) %in% c("Treatment", "Time")]
+```
+
+```{r}
+str(data_clean2)
+```
+
+
+```{r}
+#cluster1 <- data_mod %>% filter(clusterkmeans == 1)
+#cluster2 <- data_mod %>% filter(clusterkmeans == 2)
+#cluster3 <- data_mod %>% filter(clusterkmeans == 3)
+
+#data_clean2_1 <-  data_clean[, !names(data_combinada) %in% c("Treatment", "Time", "Cluster_1", "Cluster_3")]
+
+#cor(data_clean2_1, method = "spearman")
+```
+
+
+
+```{r}
+# Ajustar el modelo Random Forest para cluster 1
+set.seed(666)
+modelo_rf <- randomForest(
+  Cluster_1 ~ Live + Apoptotic + Dead + ActiveMito + MembraneDisorder + IP_PNA_dead + IP_PNA_neg + IP_PNA_intact + IP_PNA_plus + ROS_dead + ROS_live,  
+  data = data_clean2,  
+  importance = TRUE,  
+  ntree = 10000  # Número de árboles (
+)
+
+# Resumen del modelo
+print(modelo_rf)
+
+```
+
+```{r}
+# Obtener importancia
+importancia_rf <- importance(modelo_rf)
+
+# Ordenar y mostrar resultados
+importancia_df <- data.frame(Variable = rownames(importancia_rf),
+                             IncNodePurity = importancia_rf[, "IncNodePurity"])
+importancia_df <- importancia_df[order(importancia_df$IncNodePurity, decreasing = TRUE), ]
+print(importancia_df)
+
+```
+
+```{r}
+set.seed(666)
+# Ajustar el modelo Random Forest para cluster 2
+modelo_rf <- randomForest(
+  Cluster_2 ~ Live + Apoptotic + Dead + ActiveMito + MembraneDisorder + IP_PNA_dead + IP_PNA_neg + IP_PNA_intact + IP_PNA_plus + ROS_dead + ROS_live,  
+  data = data_clean2,  
+  importance = TRUE,  
+  ntree = 10000  
+)
+
+# Resumen del modelo
+print(modelo_rf)
+
+# Obtener importancia
+importancia_rf <- importance(modelo_rf)
+
+# Ordenar y mostrar resultados
+importancia_df <- data.frame(Variable = rownames(importancia_rf),
+                             IncNodePurity = importancia_rf[, "IncNodePurity"])
+importancia_df <- importancia_df[order(importancia_df$IncNodePurity, decreasing = TRUE), ]
+print(importancia_df)
+
+```
+
+```{r}
+set.seed(666)
+# Ajustar el modelo Random Forest para cluster 3
+modelo_rf <- randomForest(
+  Cluster_3 ~ Live + Apoptotic + Dead + ActiveMito + MembraneDisorder + IP_PNA_dead + IP_PNA_neg + IP_PNA_intact + IP_PNA_plus + ROS_dead + ROS_live,  
+  data = data_clean2,  
+  importance = TRUE,  
+  ntree = 10000  
+)
+
+# Resumen del modelo
+print(modelo_rf)
+
+# Obtener importancia
+importancia_rf <- importance(modelo_rf)
+
+# Ordenar y mostrar resultados
+importancia_df <- data.frame(Variable = rownames(importancia_rf),
+                             IncNodePurity = importancia_rf[, "IncNodePurity"])
+importancia_df <- importancia_df[order(importancia_df$IncNodePurity, decreasing = TRUE), ]
+print(importancia_df)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+-------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+# Hacemos el analisis que se suele usar, datos medios
+
+
+
+```{r}
+data_media <- read_excel("DATOS_CASA_general corregidos 29-10-24 ULTIMA.xlsx")
+head(data_media)
+```
+```{r}
+data_media <- na.omit(data_media)
+
+data_media$TIEMPO <- as.factor(data_media$TIEMPO)
+data_media$MEDIO <- as.factor(data_media$MEDIO)
+
+# Modelo VSL
+modelo_art <- art(VSL ~ TIEMPO + MEDIO + TIEMPO:MEDIO, data = data_media)
+anova_art <- anova(modelo_art)
+anova_art
+
+art.con(modelo_art, "TIEMPO")
+art.con(modelo_art, "MEDIO")
+```
+
+```{r}
+# Modelo LIN
+modelo_art <- art(LIN ~ TIEMPO + MEDIO + TIEMPO:MEDIO, data = data_media)
+anova_art <- anova(modelo_art)
+anova_art
+
+art.con(modelo_art, "TIEMPO")
+art.con(modelo_art, "MEDIO")
+```
+
+```{r}
+# Modelo ALH
+modelo_art <- art(ALH ~ TIEMPO + MEDIO + TIEMPO:MEDIO, data = data_media)
+anova_art <- anova(modelo_art)
+anova_art
+
+art.con(modelo_art, "TIEMPO")
+art.con(modelo_art, "MEDIO")
+```
+
+
+
+
+```{r}
+names(data_media)
+```
+
+
+```{r}
+data_media$TIEMPO <- as.factor (data_media$TIEMPO)
+
+# Grafico VSL vs tiempo
+ggplot(data_media, aes(x = TIEMPO, y = VSL)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", 
+             aes(fill = TIEMPO), # Map fill to MEDIO
+             fill = c("#97FFFF", "#8DEEEE", "#79CDCD", "#528B8B", "#2F4F4F")) +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar", width = 0.2) +
+  labs(x = "Time", y = "VSL", fill = "MEDIO") +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16))
+
+# Grafico ALH vs tiempo
+ggplot(data_media, aes(x = TIEMPO, y = ALH)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", 
+             aes(fill = TIEMPO), # Map fill to MEDIO
+             fill = c("#97FFFF", "#8DEEEE", "#79CDCD", "#528B8B", "#2F4F4F")) +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar", width = 0.2) +
+  labs(x = "Time", y = "ALH", fill = "MEDIO") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16))
+
+# Grafico LIN vs tiempo
+ggplot(data_media, aes(x = TIEMPO, y = LIN)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", 
+             aes(fill = TIEMPO), # Map fill to MEDIO
+             fill = c("#97FFFF", "#8DEEEE", "#79CDCD", "#528B8B", "#2F4F4F")) +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar", width = 0.2) +
+  labs(x = "Time", y = "LIN", fill = "MEDIO") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16))
+```
+
+```{r}
+# Grafico VSL vs medio
+ggplot(data_media, aes(x = MEDIO, y = VSL)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", 
+             aes(fill = TIEMPO), # Map fill to MEDIO
+             fill = c("#97FFFF", "#8DEEEE", "#79CDCD", "#528B8B", "#2F4F4F")) +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar", width = 0.2) +
+  labs(x = "Extender", y = "VSL", fill = "MEDIO") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16))
+
+# Grafico ALH vs medio
+ggplot(data_media, aes(x = MEDIO, y = ALH)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", 
+             aes(fill = TIEMPO), # Map fill to MEDIO
+             fill = c("#97FFFF", "#8DEEEE", "#79CDCD", "#528B8B", "#2F4F4F")) +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar", width = 0.2) +
+  labs(x = "Extender", y = "ALH", fill = "MEDIO") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16))
+
+# Grafico LIN vs medio
+ggplot(data_media, aes(x = MEDIO, y = LIN)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", 
+             aes(fill = TIEMPO), # Map fill to MEDIO
+             fill = c("#97FFFF", "#8DEEEE", "#79CDCD", "#528B8B", "#2F4F4F")) +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar", width = 0.2) +
+  labs(x = "Extender", y = "LIN", fill = "MEDIO") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16))
+
+```
+
+
+```{r}
+#  gráfico VSL
+ggplot(data_media, aes(x = TIEMPO, y = VSL, fill = MEDIO)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge") +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar",position = position_dodge(0.9), width = 0.5) +
+  labs(x = "Time", y = "VSL", fill = "Extender") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16), legend.text = element_text(size = 12))
+
+#  gráfico ALH
+ggplot(data_media, aes(x = TIEMPO, y = ALH, fill = MEDIO)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge") +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar",position = position_dodge(0.9), width = 0.5) +
+  labs(x = "Time", y = "ALH", fill = "Extender") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16),
+    legend.text = element_text(size = 14))
+
+#  gráfico LIN
+ggplot(data_media, aes(x = TIEMPO, y = LIN, fill = MEDIO)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge") +
+  stat_summary(fun.data = mean_sdl, fun.args = list(mult = 1), 
+               geom = "errorbar",position = position_dodge(0.9), width = 0.5) +
+  labs(x = "Time", y = "LIN", fill = "Extender") +
+  theme_classic()+
+  theme(
+    axis.text = element_text(size = 16),      
+    axis.title = element_text(size = 16), legend.text = element_text(size = 12))
+
+```
+
+---------------------------------------------
+# Intento de usar pruebas paramétricas
+
+```{r}
+# Vemos si las variables son normales
+shapiro.test(data_media$VCL)
+shapiro.test(data_media$LIN)
+```
+
+
+
+
+```{r}
+# rank transformation a 'VCL'
+rank_transform_VCL <- orderNorm(data_media$VCL)
+data_media$VCL <- predict(rank_transform_VCL)
+
+# rank transformation a 'VsL'
+rank_transform_VCL <- orderNorm(data_media$VSL)
+data_media$VSL <- predict(rank_transform_VCL)
+
+# rank transformation a 'VAP'
+rank_transform_VCL <- orderNorm(data_media$VAP)
+data_media$VAP <- predict(rank_transform_VCL)
+
+#  rank transformation a 'STR'
+rank_transform_VCL <- orderNorm(data_media$STR)
+data_media$STR <- predict(rank_transform_VCL)
+
+#  rank transformation a 'WOB'
+rank_transform_VCL <- orderNorm(data_media$WOB)
+data_media$WOB <- predict(rank_transform_VCL)
+
+# rank transformation a 'LIN'
+rank_transform_LIN <- orderNorm(data_media$LIN)
+data_media$LIN <- predict(rank_transform_LIN)
+
+# rank transformation a 'ALH'
+rank_transform_LIN <- orderNorm(data_media$ALH)
+data_media$ALH <- predict(rank_transform_LIN)
+
+# rank transformation a 'LIN'
+rank_transform_LIN <- orderNorm(data_media$BCF)
+data_media$BCF <- predict(rank_transform_LIN)
+
+# Comprobamos si ahora estan normalizadas
+shapiro.test(data_media$VCL)
+shapiro.test(data_media$LIN)
+shapiro.test(data_media$VSL)
+shapiro.test(data_media$VAP)
+shapiro.test(data_media$STR)
+shapiro.test(data_media$WOB)
+shapiro.test(data_media$ALH)
+shapiro.test(data_media$BCF)
+
+```
+
+
+
+```{r}
+leveneTest(VSL ~ TIEMPO, data = data_media)
+leveneTest(LIN ~ TIEMPO, data = data_media)
+leveneTest(ALH ~ TIEMPO, data = data_media)
+
+leveneTest(VSL ~ MEDIO, data = data_media)
+leveneTest(LIN ~ MEDIO, data = data_media)
+leveneTest(ALH ~ MEDIO, data = data_media)
+
+leveneTest(VSL ~ TIEMPO * MEDIO, data = data_media)
+leveneTest(LIN ~ TIEMPO * MEDIO, data = data_media)
+leveneTest(ALH ~ TIEMPO * MEDIO, data = data_media)
+```
+
+
+
+
+
+```{r}
+data_media <- read_excel("DATOS_CASA_general corregidos 29-10-24 ULTIMA.xlsx")
+head(data_media)
+
+# Convertir las variables de agrupación a factores si no lo son
+data_media$TIEMPO <- as.factor(data_media$TIEMPO)
+data_media$MEDIO <- as.factor(data_media$MEDIO)
+
+# Realizar la prueba de Box con el marco de datos completo
+
+boxM_result <- boxM(data_media[, c("LIN", "VSL")], 
+                    data_media$TIEMPO)  # Usamos TIEMPO como variable de agrupación
+print(boxM_result)
+```
+
+```{r}
+# Añadir una constante a la variable VSL para evitar valores 0 o negativos
+data_media$VSL <- data_media$VSL + 1
+data_media$ALH <- data_media$ALH + 1
+
+# Repite para otras variables (ejemplo con VSL)
+model_VSL <- lm(VSL ~ 1, data = data_media)
+boxcox_result_VSL <- boxcox(model_VSL, lambda = seq(-2, 2, by = 0.1))
+optimal_lambda_VSL <- boxcox_result_VSL$x[which.max(boxcox_result_VSL$y)]
+data_media$VSL <- (data_media$VSL^optimal_lambda_VSL - 1) / optimal_lambda_VSL
+
+# Para VCL
+model_VCL <- lm(ALH ~ 1, data = data_media) # Modelo con término independiente
+boxcox_result_VCL <- boxcox(model_VCL, lambda = seq(-2, 2, by = 0.1)) # Rango de lambdas
+optimal_lambda_VCL <- boxcox_result_VCL$x[which.max(boxcox_result_VCL$y)] # Lambda óptimo
+data_media$ALH <- (data_media$ALH^optimal_lambda_VCL - 1) / optimal_lambda_VCL # Aplicar transformación
+```
+
+```{r}
+summary(data_media$VSL)
+shapiro.test(data_media$VCL)
+shapiro.test(data_media$LIN)
+shapiro.test(data_media$VSL)
+shapiro.test(data_media$VAP)
+shapiro.test(data_media$STR)
+shapiro.test(data_media$WOB)
+shapiro.test(data_media$ALH)
+shapiro.test(data_media$BCF)
+```
+
+
+
+
+```{r}
+leveneTest(VSL ~ TIEMPO, data = data_media)
+leveneTest(LIN ~ TIEMPO, data = data_media)
+leveneTest(ALH ~ TIEMPO, data = data_media)
+
+leveneTest(VSL ~ MEDIO, data = data_media)
+leveneTest(LIN ~ MEDIO, data = data_media)
+leveneTest(ALH ~ MEDIO, data = data_media)
+
+leveneTest(VSL ~ TIEMPO * MEDIO, data = data_media)
+leveneTest(LIN ~ TIEMPO * MEDIO, data = data_media)
+leveneTest(ALH ~ TIEMPO * MEDIO, data = data_media)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
